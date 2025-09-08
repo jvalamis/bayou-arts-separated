@@ -1,0 +1,72 @@
+name: Site Repo Guard
+on: [pull_request, push]
+
+jobs:
+  guard:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Check REPO_KIND file
+        run: |
+          if [ ! -f "REPO_KIND" ]; then
+            echo "❌ Missing REPO_KIND file. This repo must declare its role."
+            exit 1
+          fi
+          
+          REPO_KIND=$(cat REPO_KIND)
+          echo "✅ Repo kind: $REPO_KIND"
+          
+          if [ "$REPO_KIND" != "SITE" ]; then
+            echo "❌ This workflow should only run in SITE repos"
+            exit 1
+          fi
+      
+      - name: Fail if generator-only paths exist
+        run: |
+          # Check for generator-specific files that shouldn't be in site repos
+          banned=$(git ls-files | grep -E '(^packages/eddie_renderer/|^lib/normalizer\.js|^lib/multi-page-transformer\.js|^lib/github-manager\.js|^scripts/generate-app-single-commit\.js|^\.github/workflows/site-guard\.yml$)' || true)
+          if [ -n "$banned" ]; then
+            echo "❌ Do not add generator code to a SITE repo:"
+            echo "$banned"
+            echo ""
+            echo "These files belong in the Eddie generator repo, not in generated sites."
+            echo "Sites should depend on eddie_renderer via git dependency, not copy the source."
+            exit 1
+          fi
+      
+      - name: Validate site structure
+        run: |
+          # Ensure key site files exist
+          required_files=(
+            "REPO_KIND"
+            "EDDIE_PROJECT_RULES.md"
+            "CURSOR_PROMPT_SITE.md"
+            "content.json"
+            "lib/main.dart"
+            "pubspec.yaml"
+          )
+          
+          for file in "${required_files[@]}"; do
+            if [ ! -f "$file" ]; then
+              echo "❌ Missing required site file: $file"
+              exit 1
+            fi
+          done
+          
+          echo "✅ Site structure validation passed"
+      
+      - name: Check eddie_renderer dependency
+        run: |
+          if [ -f "pubspec.yaml" ]; then
+            if grep -q "eddie_renderer:" pubspec.yaml; then
+              if grep -q "git:" pubspec.yaml; then
+                echo "✅ eddie_renderer is properly referenced as git dependency"
+              else
+                echo "⚠️  eddie_renderer should be a git dependency, not a local path"
+              fi
+            else
+              echo "❌ pubspec.yaml must include eddie_renderer dependency"
+              exit 1
+            fi
+          fi
